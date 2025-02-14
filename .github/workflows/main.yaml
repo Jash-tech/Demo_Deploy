@@ -1,0 +1,43 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build, Push & Deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Login to AWS ECR
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set region ${{ secrets.AWS_DEFAULT_REGION }}
+          aws ecr get-login-password --region ${{ secrets.AWS_DEFAULT_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_REPO }}
+
+      - name: Build and Tag Docker Image
+        run: |
+          docker build -t fastapi_app .
+          docker tag fastapi_app:latest ${{ secrets.AWS_ECR_REPO }}:latest
+
+      - name: Push Docker Image to AWS ECR
+        run: |
+          docker push ${{ secrets.AWS_ECR_REPO }}:latest
+
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
+          docker pull ${{ secrets.AWS_ECR_REPO }}:latest
+          docker stop fastapi_container || true
+          docker rm fastapi_container || true
+          docker run -d -p 8000:8000 --name fastapi_container ${{ secrets.AWS_ECR_REPO }}:latest
+          EOF
